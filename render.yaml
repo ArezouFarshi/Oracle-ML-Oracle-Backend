@@ -2,4 +2,4 @@ services:
   - type: web
     name: oracle-ml-backend
     env: docker
-    plan: free
+    plan: Starter
