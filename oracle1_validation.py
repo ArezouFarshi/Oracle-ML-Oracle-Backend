@@ -1,29 +1,18 @@
-def validate_payload(data):
-    panel_id = data.get("panel_id", "").strip()
-    sensors = data.get("sensors", {})
-    mlx = sensors.get("mlx90614", {})
+def validate_payload(data: dict):
+    """
+    Oracle 1: Validate incoming sensor payload.
+    Checks required fields and plausible ranges.
+    """
+    required = ["panel_id", "temperature", "humidity", "tilt"]
+    for field in required:
+        if field not in data:
+            return False, {"reason": f"Missing field: {field}"}
 
-    amb = mlx.get("ambient_c")
-    obj = mlx.get("object_c")
+    if not (-40 <= data["temperature"] <= 80):
+        return False, {"reason": "Temperature out of range"}
+    if not (0 <= data["humidity"] <= 100):
+        return False, {"reason": "Humidity out of range"}
+    if not (-90 <= data["tilt"] <= 90):
+        return False, {"reason": "Tilt out of range"}
 
-    if not panel_id.startswith("ID_"):
-        return False, {"reason": "invalid_panel_id_format"}
-
-    if amb is None or obj is None:
-        return False, {"reason": "missing_temperature_values"}
-
-    try:
-        amb = float(amb)
-        obj = float(obj)
-    except ValueError:
-        return False, {"reason": "invalid_number_format"}
-
-    if not (-40 <= amb <= 125) or not (-40 <= obj <= 380):
-        return False, {"reason": "temperature_out_of_range"}
-
-    return True, {
-        "panel_id": panel_id,
-        "ambient_c": amb,
-        "object_c": obj,
-        "diff_c": obj - amb
-    }
+    return True, data
