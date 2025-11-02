@@ -1,1 +1,2 @@
-python train_model.py
+import joblib
+joblib.dump(model, "fault_model.pkl")
