@@ -1,3 +1,4 @@
+--only-binary=:all: numpy scipy scikit-learn
 flask==3.0.3
 numpy==1.26.4
 scipy==1.11.3
