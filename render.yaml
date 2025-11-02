@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: backend-1st-oracle
+    name: oracle-ml-backend
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
