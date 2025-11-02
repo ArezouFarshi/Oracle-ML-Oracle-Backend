@@ -1,6 +1,7 @@
-﻿services:
+services:
   - type: web
-    name: facade-backend
+    name: backend-1st-oracle
     env: python
-    buildCommand: ""
-    startCommand: python app.py
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start.sh
