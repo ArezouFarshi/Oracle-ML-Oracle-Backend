@@ -1,7 +1,6 @@
 import joblib
 import os
 
-# Load trained model once (will persist across API calls)
 model_path = os.getenv("MODEL_PATH", "fault_model.pkl")
 model = joblib.load(model_path)
 
@@ -9,7 +8,7 @@ def predict_fault(data):
     try:
         X = [[data["ambient_c"], data["object_c"], data["diff_c"]]]
         y_pred = model.predict(X)[0]
-        y_score = model.predict_proba(X)[0][1]  # Probability of fault = class 1
+        y_score = model.predict_proba(X)[0][1]
         return True, {
             "fault": bool(y_pred),
             "score": round(y_score, 3),
