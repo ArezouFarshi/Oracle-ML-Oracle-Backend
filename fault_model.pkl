@@ -1,2 +1,9 @@
 import joblib
+from sklearn.linear_model import LogisticRegression  # or whatever model you used
+
+# retrain or reload your model properly
+model = LogisticRegression()
+# model.fit(X, y)  # if you have training data
+
+# save it cleanly
 joblib.dump(model, "fault_model.pkl")
