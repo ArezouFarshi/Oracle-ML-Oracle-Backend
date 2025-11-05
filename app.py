@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from oracle1_validation import validate_payload
-from ml_model import predict_fault
+from ml_model import predict_fault, retrain_model
 from oracle2_finalize import finalize_event
 
 app = Flask(__name__)
@@ -48,6 +48,20 @@ def ingest():
 def get_panel_history(panel_id):
     # Show all saved events for this panel (since last restart)
     return jsonify({"panel_id": panel_id, "history": panel_history.get(panel_id, [])})
+
+@app.route("/retrain", methods=["POST"])
+def retrain():
+    # Expects JSON: { "features": [...], "labels": [...] }
+    payload = request.get_json(force=True)
+    features = payload.get("features")
+    labels = payload.get("labels")
+    if not features or not labels:
+        return jsonify({"ok": False, "error": "Features and labels required"}), 400
+    ok, msg = retrain_model(features, labels)
+    if ok:
+        return jsonify({"ok": True, "status": msg}), 200
+    else:
+        return jsonify({"ok": False, "error": msg}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
