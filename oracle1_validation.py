@@ -1,18 +1,23 @@
 def validate_payload(data: dict):
-    """
-    Oracle 1: Validate incoming sensor payload.
-    Checks required fields and plausible ranges.
-    """
-    required = ["panel_id", "temperature", "humidity", "tilt"]
+    required = ["panel_id", "surface_temp", "ambient_temp"]
     for field in required:
         if field not in data:
             return False, {"reason": f"Missing field: {field}"}
 
-    if not (-40 <= data["temperature"] <= 80):
-        return False, {"reason": "Temperature out of range"}
-    if not (0 <= data["humidity"] <= 100):
-        return False, {"reason": "Humidity out of range"}
-    if not (-90 <= data["tilt"] <= 90):
-        return False, {"reason": "Tilt out of range"}
+    # Surface temperature checks
+    st = data["surface_temp"]
+    if st < -15 or st > 85:
+        return False, {"reason": "Surface temperature FAULT"}
+    if st < -10 or st > 75:
+        return True, {"warning": "Surface temperature WARNING", **data}
+
+    # Ambient temperature checks
+    at = data["ambient_temp"]
+    if at < -20 or at > 55:
+        return False, {"reason": "Ambient temperature FAULT"}
+    if at < -10 or at > 45:
+        return True, {"warning": "Ambient temperature WARNING", **data}
+
+    # You can add tilt/accel_x/accel_y/accel_z logic later
 
     return True, data
