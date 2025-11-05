@@ -1,6 +1,7 @@
 import joblib
 import numpy as np
 import os
+from sklearn.linear_model import LogisticRegression
 
 MODEL_PATH = "fault_model.pkl"
 
@@ -19,9 +20,26 @@ def predict_fault(data: dict):
         model = load_model()
         features = np.array([
             data["surface_temp"],
-            data["ambient_temp"]
+            data["ambient_temp"],
+            data["accel_x"],
+            data["accel_y"],
+            data["accel_z"]
         ]).reshape(1, -1)
         prediction = model.predict(features)[0]
         return True, {"prediction": int(prediction)}
-    except Exception as e:
+    except Exception as e: 
         return False, {"error": str(e)}
+
+def retrain_model(features, labels):
+    """
+    Train or retrain the ML model in the cloud and save it.
+    """
+    try:
+        X = np.array(features)
+        y = np.array(labels)
+        model = LogisticRegression()
+        model.fit(X, y)
+        joblib.dump(model, MODEL_PATH)
+        return True, "Model retrained and saved."
+    except Exception as e:
+        return False, f"Retraining error: {e}"
