@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file, abort
 from oracle1_validation import validate_payload
 from ml_model import predict_fault, retrain_model
 from oracle2_finalize import finalize_event
@@ -8,9 +8,19 @@ app = Flask(__name__)
 # In-memory store for per-panel records (cleared on restart)
 panel_history = {}
 
+# Set your admin API key here (change the value as you wish)
+ADMIN_API_KEY = "mySuperSecretKey2024"  # Or any value for testing
+
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({"ok": True, "status": "Oracle backend running"})
+
+@app.route('/download_model', methods=['GET'])
+def download_model():
+    api_key = request.headers.get("X-API-KEY")
+    if api_key != ADMIN_API_KEY:
+        abort(403)  # Forbidden
+    return send_file('fault_model.pkl', as_attachment=True)
 
 @app.route("/ingest", methods=["POST"])
 def ingest():
