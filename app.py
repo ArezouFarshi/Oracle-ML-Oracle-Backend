@@ -8,8 +8,8 @@ app = Flask(__name__)
 # In-memory store for per-panel records (cleared on restart)
 panel_history = {}
 
-# Set your admin API key here (change the value as you wish)
-ADMIN_API_KEY = "Admin_acsess_to_platform"  # Or any value for testing
+# Set your admin API key here (change this for production!)
+ADMIN_API_KEY = "Admin_acsess_to_platform"
 
 @app.route("/", methods=["GET"])
 def health():
