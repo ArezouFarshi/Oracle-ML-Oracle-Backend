@@ -9,7 +9,7 @@ app = Flask(__name__)
 panel_history = {}
 
 # Set your admin API key here (change the value as you wish)
-ADMIN_API_KEY = "mySuperSecretKey2024"  # Or any value for testing
+ADMIN_API_KEY = "Admin_acsess_to_platform"  # Or any value for testing
 
 @app.route("/", methods=["GET"])
 def health():
