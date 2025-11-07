@@ -68,4 +68,32 @@ def ingest():
 
     if final_ok:
         # If status indicates a fault, add diagnosis
-        if "Fault
+        if "Fault detected" in status:
+            reason = diagnose_fault(cleaned)
+            return jsonify({"ok": True, "status": status, "reason": reason}), 200
+        else:
+            return jsonify({"ok": True, "status": status}), 200
+    else:
+        return jsonify({"ok": False, "status": status}), 500
+
+@app.route("/panel_history/<panel_id>", methods=["GET"])
+def get_panel_history(panel_id):
+    # Show all saved events for this panel (since last restart)
+    return jsonify({"panel_id": panel_id, "history": panel_history.get(panel_id, [])})
+
+@app.route("/retrain", methods=["POST"])
+def retrain():
+    # Expects JSON: { "features": [...], "labels": [...] }
+    payload = request.get_json(force=True)
+    features = payload.get("features")
+    labels = payload.get("labels")
+    if not features or not labels:
+        return jsonify({"ok": False, "error": "Features and labels required"}), 400
+    ok, msg = retrain_model(features, labels)
+    if ok:
+        return jsonify({"ok": True, "status": msg}), 200
+    else:
+        return jsonify({"ok": False, "error": msg}), 500
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
