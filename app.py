@@ -16,54 +16,6 @@ COLOR_CODES = {
     "system_error":    ("Sensor/ML system/platform error (System error)", "purple"),
 }
 
-def diagnose_fault(data):
-    messages = []
-    warning = False
-    # Surface temperature
-    if data.get('surface_temp') is not None:
-        st = data['surface_temp']
-        if st > 35:
-            messages.append("High surface temperature: possible solar load, thermal bridge, or insulation defect.")
-            if st < 37:
-                warning = True
-        elif st < 20:
-            messages.append("Low surface temperature: possible thermal bridge, insulation defect, or air leakage.")
-            if st > 18:
-                warning = True
-    # Ambient temperature
-    if data.get('ambient_temp') is not None:
-        at = data['ambient_temp']
-        if at < 20 or at > 28:
-            messages.append("Ambient temperature out of comfort range: possible HVAC issue or open window.")
-            if 18 < at < 20 or 28 < at < 30:
-                warning = True
-    # Panel moved/displaced — thresholds updated!
-    accel_x, accel_y, accel_z = data.get('accel_x', 0), data.get('accel_y', 0), data.get('accel_z', 1)
-    # Treat up to 1.10 as normal
-    if abs(accel_x) > 1.10 or abs(accel_y) > 1.10 or abs(accel_z) < 0.7:
-        messages.append("Panel orientation abnormal: possible displacement, fixing failure, or wind-induced movement.")
-        # Mild warning for 1.05–1.10
-        if (1.05 < abs(accel_x) <= 1.10 or
-            1.05 < abs(accel_y) <= 1.10 or
-            0.7 < abs(accel_z) < 0.8):
-            warning = True
-    if warning and messages:
-        return "; ".join(messages), "warning"
-    if messages:
-        return "; ".join(messages), "fault"
-    return None, "normal"
-
-def system_error_reason(data, error_type="SensorError"):
-    if error_type == "SensorError":
-        missing_fields = [k for k in ['surface_temp', 'ambient_temp', 'accel_x', 'accel_y', 'accel_z'] if data.get(k) is None]
-        if missing_fields:
-            return "SensorError"
-    elif error_type == "MLFailure":
-        return "MLFailure"
-    else:
-        return "PlatformError"
-    return "SystemError"
-
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({"ok": True, "status": "Oracle backend running"})
@@ -109,7 +61,7 @@ def ingest():
             "reason": error_type
         }), 400
 
-    # Oracle 2: ML prediction
+    # Oracle 2: ML prediction (THIS IS WHERE THE STATUS COMES FROM)
     ml_ok, result = predict_fault(cleaned)
     if not ml_ok:
         return jsonify({
@@ -119,36 +71,23 @@ def ingest():
             "reason": "MLFailure"
         }), 500
 
-    # Finalize Oracle: can be expanded later
-    final_ok, status_text = finalize_event(panel_id, result)
-    color, status = COLOR_CODES['normal'][1], COLOR_CODES['normal'][0]
-
-    # Check for system/platform errors (missing data)
-    if any(cleaned.get(k) is None for k in ['surface_temp', 'ambient_temp', 'accel_x', 'accel_y', 'accel_z']):
-        return jsonify({
-            "ok": False,
-            "color": COLOR_CODES['system_error'][1],
-            "status": COLOR_CODES['system_error'][0],
-            "reason": "SensorError"
-        }), 500
-
-    # Analyze for warning or fault
-    reason, detected_type = diagnose_fault(cleaned)
-    if detected_type == "warning":
+    # result["prediction"] should be 0 (normal), 1 (fault), or 2 (warning)
+    pred = result.get("prediction")
+    if pred == 0:
+        color, status = COLOR_CODES['normal'][1], COLOR_CODES['normal'][0]
+    elif pred == 2:
         color, status = COLOR_CODES['warning'][1], COLOR_CODES['warning'][0]
-    elif detected_type == "fault":
+    elif pred == 1:
         color, status = COLOR_CODES['fault'][1], COLOR_CODES['fault'][0]
     else:
-        color, status = COLOR_CODES['normal'][1], COLOR_CODES['normal'][0]
+        color, status = COLOR_CODES['system_error'][1], COLOR_CODES['system_error'][0]
 
-    result_json = {
+    response = {
         "ok": True,
         "color": color,
-        "status": status_text if detected_type == "normal" else status
+        "status": status
     }
-    if detected_type != "normal":
-        result_json["reason"] = reason
-    return jsonify(result_json), 200
+    return jsonify(response), 200
 
 @app.route("/panel_history/<panel_id>", methods=["GET"])
 def get_panel_history(panel_id):
