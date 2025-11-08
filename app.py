@@ -4,10 +4,11 @@ from flask import Flask, request, jsonify, send_file, abort
 from web3 import Web3
 from oracle1_validation import validate_payload
 from ml_model import predict_fault, retrain_model
+from oracle2_finalize import finalize_event
 
 app = Flask(__name__)
 
-# --- access and state ---
+# --- Access and per-panel state (last known status) ---
 ADMIN_API_KEY = "Admin_acsess_to_platform"  # keep your existing wording
 panel_history = {}  # { panel_id: "not_installed" | "normal" | "warning" | "fault" | "system_error" }
 
@@ -19,10 +20,10 @@ COLOR_CODES = {
     "system_error":    ("Sensor/ML system/platform error (System error)", "purple"),
 }
 
-# --- Web3 setup ---
+# --- Web3 / contract setup ---
 INFURA_URL = os.environ["INFURA_URL"]
 ORACLE_PRIVATE_KEY = os.environ["ORACLE_PRIVATE_KEY"]
-CONTRACT_ADDRESS = os.environ.get("CONTRACT_ADDRESS", "0xB0561d4580126DdF8DEEA9B7e356ee3F26A52e40")
+CONTRACT_ADDRESS = os.environ["CONTRACT_ADDRESS"]  # deployed PanelEvents contract
 
 w3 = Web3(Web3.HTTPProvider(INFURA_URL))
 oracle_account = w3.eth.account.from_key(ORACLE_PRIVATE_KEY)
@@ -45,7 +46,6 @@ ABI = [
         "type": "function"
     }
 ]
-
 contract = w3.eth.contract(address=CONTRACT_ADDRESS, abi=ABI)
 
 def log_to_blockchain(panel_id: str, payload: dict) -> str:
@@ -70,10 +70,25 @@ def log_to_blockchain(panel_id: str, payload: dict) -> str:
     tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
     return w3.to_hex(tx_hash)
 
+def log_if_changed(panel_id: str, new_status: str, payload: dict) -> dict:
+    """
+    Event-driven logging helper:
+    - Logs to blockchain only if status changes.
+    - Updates panel_history.
+    - Returns payload with tx_hash if logged.
+    """
+    last_status = panel_history.get(panel_id)
+    if last_status != new_status:
+        tx_hash = log_to_blockchain(panel_id, payload)
+        payload["tx_hash"] = tx_hash
+        panel_history[panel_id] = new_status
+    return payload
+
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({"ok": True, "status": "Oracle backend running"})
 
+# Admin-only model download (unchanged as requested)
 @app.route("/download_model", methods=["GET"])
 def download_model():
     api_key = request.headers.get("X-API-KEY")
@@ -83,7 +98,7 @@ def download_model():
 
 @app.route("/ingest", methods=["POST"])
 def ingest():
-    # Parse request
+    # Parse JSON
     try:
         data = request.get_json(force=True)
     except Exception:
@@ -101,88 +116,103 @@ def ingest():
 
     panel_id = data.get("panel_id", "unknown")
 
-    # Handle missing panel_id → treat as not installed (one-time)
+    # Installation logic (one-time): if panel_id unknown treat as not_installed
     if panel_id == "unknown":
-        response = {
+        payload = {
             "ok": False,
             "color": COLOR_CODES['not_installed'][1],
             "status": COLOR_CODES['not_installed'][0],
             "prediction": -1
         }
-        if panel_history.get(panel_id) != "not_installed":
-            tx_hash = log_to_blockchain(panel_id, response)
-            response["tx_hash"] = tx_hash
-            panel_history[panel_id] = "not_installed"
+        response = log_if_changed(panel_id, "not_installed", payload)
         return jsonify(response), 200
 
-    # Oracle 1: validate payload
-    valid, cleaned = validate_payload(data)
+    # Oracle 1: validate sensor payload (Trust Filter)
+    valid, vresult = validate_payload(data)
     if not valid:
-        response = {
+        # Purple system error (sensor error)
+        payload = {
             "ok": False,
             "color": COLOR_CODES['system_error'][1],
             "status": COLOR_CODES['system_error'][0],
-            "reason": "SensorError",
+            "reason": vresult.get("reason", "SensorError"),
             "prediction": -1
         }
-        last = panel_history.get(panel_id)
-        if last != "system_error":
-            tx_hash = log_to_blockchain(panel_id, response)
-            response["tx_hash"] = tx_hash
-            panel_history[panel_id] = "system_error"
+        response = log_if_changed(panel_id, "system_error", payload)
         return jsonify(response), 400
 
-    # Oracle 2: predict + verify ML outcomes
-    ml_ok, result = predict_fault(cleaned)
+    # If Oracle 1 flagged a warning (pass-through), preserve cleaned data
+    if isinstance(vresult, dict) and "warning" in vresult:
+        cleaned = {k: vresult.get(k, data.get(k)) for k in ["surface_temp", "ambient_temp", "accel_x", "accel_y", "accel_z"]}
+    else:
+        cleaned = {
+            "surface_temp": data["surface_temp"],
+            "ambient_temp": data["ambient_temp"],
+            "accel_x": data["accel_x"],
+            "accel_y": data["accel_y"],
+            "accel_z": data["accel_z"]
+        }
+
+    # Oracle 2: run ML and finalize event (Prediction Verifier)
+    ml_ok, ml_result = predict_fault(cleaned)
     if not ml_ok:
-        response = {
+        # Purple ML error / platform error
+        payload = {
             "ok": False,
             "color": COLOR_CODES['system_error'][1],
             "status": COLOR_CODES['system_error'][0],
             "reason": "MLFailure",
             "prediction": -1
         }
-        last = panel_history.get(panel_id)
-        if last != "system_error":
-            tx_hash = log_to_blockchain(panel_id, response)
-            response["tx_hash"] = tx_hash
-            panel_history[panel_id] = "system_error"
+        response = log_if_changed(panel_id, "system_error", payload)
         return jsonify(response), 500
 
-    pred = int(result.get("prediction", -1))
-    cause = result.get("reason", "")
+    # Attach raw data to result for cause analysis in finalize_event
+    ml_result["data"] = cleaned
 
-    if pred == 0:
+    # Finalize event (status, color, reason), enforcing no duplicate normals
+    last_status = panel_history.get(panel_id, None)
+    ok2, final = finalize_event(panel_id, ml_result, last_status=last_status)
+
+    # If finalize_event says skip (duplicate normal), return current state without logging
+    if not ok2 and final.get("skip"):
+        # Build a lightweight response showing current normal state
+        response = {
+            "ok": True,
+            "color": COLOR_CODES['normal'][1],
+            "status": COLOR_CODES['normal'][0],
+            "prediction": 0
+        }
+        return jsonify(response), 200
+
+    # Otherwise, log if status changed
+    # We need to infer new_status from final["status"]
+    # Map status string back to canonical key
+    status_str = final["status"]
+    if status_str.startswith("Installed and healthy"):
         new_status = "normal"
-        color, status = COLOR_CODES['normal'][1], COLOR_CODES['normal'][0]
-    elif pred == 2:
+        prediction = 0
+    elif status_str.startswith("Warning"):
         new_status = "warning"
-        color, status = COLOR_CODES['warning'][1], COLOR_CODES['warning'][0]
-    elif pred == 1:
+        prediction = 2
+    elif status_str.startswith("Confirmed fault"):
         new_status = "fault"
-        color, status = COLOR_CODES['fault'][1], COLOR_CODES['fault'][0]
+        prediction = 1
     else:
         new_status = "system_error"
-        color, status = COLOR_CODES['system_error'][1], COLOR_CODES['system_error'][0]
+        prediction = -1
 
-    response = {
-        "ok": (new_status != "system_error"),
-        "color": color,
-        "status": status,
-        "prediction": pred
+    payload = {
+        "ok": final.get("ok", True),
+        "color": final.get("color", COLOR_CODES['system_error'][1]),
+        "status": status_str,
+        "reason": final.get("reason", ""),
+        "prediction": prediction
     }
-    if cause and new_status in ("warning", "fault"):
-        response["reason"] = cause
-
-    # Event-driven logging: only on status change
-    last_status = panel_history.get(panel_id)
-    if last_status != new_status:
-        tx_hash = log_to_blockchain(panel_id, response)
-        response["tx_hash"] = tx_hash
-        panel_history[panel_id] = new_status
-
+    response = log_if_changed(panel_id, new_status, payload)
     return jsonify(response), 200
 
+# Admin retraining (unchanged as requested)
 @app.route("/retrain", methods=["POST"])
 def retrain():
     payload = request.get_json(force=True)
@@ -196,4 +226,5 @@ def retrain():
     return jsonify({"ok": False, "error": msg}), 500
 
 if __name__ == "__main__":
+    # In production, use Gunicorn or similar WSGI server
     app.run(host="0.0.0.0", port=5000)
