@@ -19,7 +19,7 @@ def finalize_event(panel_id, result):
             color = "blue"
             status = "Installed and healthy (Normal operation)"
             cause = "No issue detected"
-        elif prediction == 1:
+        elif prediction == 2:
             color = "yellow"
             status = "Warning (abnormal values detected)"
             if abs(surface - ambient) > temp_diff_warn:
@@ -28,7 +28,7 @@ def finalize_event(panel_id, result):
                 cause = "Panel orientation abnormal (check fixing or wind movement)"
             else:
                 cause = "General warning"
-        elif prediction == 2:
+        elif prediction == 1:
             color = "red"
             status = "Confirmed fault (urgent action needed)"
             if surface < ambient - temp_diff_fault:
