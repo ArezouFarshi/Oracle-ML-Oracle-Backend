@@ -98,6 +98,24 @@ def download_model():
     return send_file("fault_model.pkl", as_attachment=True)
 
 
+@app.route("/train", methods=["POST"])
+def train():
+    """
+    Retrain the ML model with new data (admin only).
+    """
+    api_key = request.headers.get("X-API-KEY")
+    if api_key != ADMIN_API_KEY:
+        abort(403)
+
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return jsonify({"valid": False, "details": "Invalid JSON payload"}), 400
+
+    ok, result = retrain_model(data)
+    return jsonify({"valid": ok, "details": result}), 200 if ok else 500
+
+
 @app.route("/monitor", methods=["POST"])
 def monitor():
     payload = request.get_json(silent=True) or {}
@@ -206,7 +224,7 @@ def ingest():
         }
         return jsonify(response), 200
 
-    color = final.get("severity_color", COLOR_CODES['system_error'][1])
+        color = final.get("severity_color", COLOR_CODES['system_error'][1])
     if color == "blue":
         new_status = "normal"
         prediction = 0
