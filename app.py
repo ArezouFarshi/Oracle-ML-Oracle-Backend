@@ -61,7 +61,7 @@ def ingest():
             "reason": error_type
         }), 400
 
-    # Oracle 2: ML prediction (THIS IS WHERE THE STATUS COMES FROM)
+    # Oracle 2: ML prediction
     ml_ok, result = predict_fault(cleaned)
     if not ml_ok:
         return jsonify({
@@ -71,22 +71,41 @@ def ingest():
             "reason": "MLFailure"
         }), 500
 
-    # result["prediction"] should be 0 (normal), 1 (fault), or 2 (warning)
     pred = result.get("prediction")
-    if pred == 0:
-        color, status = COLOR_CODES['normal'][1], COLOR_CODES['normal'][0]
-    elif pred == 2:
-        color, status = COLOR_CODES['warning'][1], COLOR_CODES['warning'][0]
-    elif pred == 1:
-        color, status = COLOR_CODES['fault'][1], COLOR_CODES['fault'][0]
-    else:
-        color, status = COLOR_CODES['system_error'][1], COLOR_CODES['system_error'][0]
+    # Default to normal (blue)
+    color, status = COLOR_CODES['normal'][1], COLOR_CODES['normal'][0]
+    cause = None
+
+    # If warning/fault, analyze which sensor is most abnormal (distance from "typical" value)
+    if pred == 2 or pred == 1:
+        color = COLOR_CODES['warning'][1] if pred == 2 else COLOR_CODES['fault'][1]
+        status = COLOR_CODES['warning'][0] if pred == 2 else COLOR_CODES['fault'][0]
+        st, at, x, y, z = cleaned['surface_temp'], cleaned['ambient_temp'], cleaned['accel_x'], cleaned['accel_y'], cleaned['accel_z']
+        deviations = {
+            "surface_temp": abs(st - 23.5),   # Use your real healthy mean
+            "ambient_temp": abs(at - 24.2),   # Use your real healthy mean
+            "accel_x": abs(x - 1.03),
+            "accel_y": abs(y - 0.00),
+            "accel_z": abs(z - -0.08)
+        }
+        main_sensor = max(deviations, key=deviations.get)
+        if main_sensor == "surface_temp":
+            cause = "Surface temperature abnormal"
+        elif main_sensor == "ambient_temp":
+            cause = "Ambient temperature abnormal"
+        elif main_sensor.startswith("accel"):
+            cause = "Orientation/tilt abnormal"
+        else:
+            cause = "Unknown anomaly"
 
     response = {
         "ok": True,
         "color": color,
         "status": status
     }
+    if cause:
+        response["reason"] = cause
+
     return jsonify(response), 200
 
 @app.route("/panel_history/<panel_id>", methods=["GET"])
