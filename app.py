@@ -224,7 +224,7 @@ def ingest():
         }
         return jsonify(response), 200
 
-    color = final.get("severity_color", COLOR_CODES['system_error'][1])
+        color = final.get("severity_color", COLOR_CODES['system_error'][1])
     if color == "blue":
         new_status = "normal"
         prediction = 0
@@ -234,3 +234,22 @@ def ingest():
     elif color == "red":
         new_status = "fault"
         prediction = 1
+    else:
+        new_status = "system_error"
+        prediction = -1
+
+    payload = {
+        "valid": final.get("valid", color != COLOR_CODES['system_error'][1]),
+        "severity_color": color,
+        "state": final.get("state", COLOR_CODES['system_error'][0]),
+        "details": final.get("details", ""),
+        "prediction": prediction
+    }
+    response = log_if_changed(panel_id, new_status, payload)
+    return jsonify(response), 200
+
+
+# --- Entrypoint ---
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
