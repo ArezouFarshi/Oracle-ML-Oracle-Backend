@@ -51,6 +51,13 @@ ABI = [
 contract = w3.eth.contract(address=CONTRACT_ADDRESS, abi=ABI)
 
 
+def _check_admin():
+    """Accept either X-API-KEY or X-Admin-Key for admin calls."""
+    key = request.headers.get("X-API-KEY") or request.headers.get("X-Admin-Key")
+    if key != ADMIN_API_KEY:
+        abort(403)
+
+
 def log_to_blockchain(panel_id: str, payload: dict) -> str:
     tx = contract.functions.addPanelEvent(
         panel_id,
@@ -92,28 +99,29 @@ def health():
 
 @app.route("/download_model", methods=["GET"])
 def download_model():
-    api_key = request.headers.get("X-API-KEY")
-    if api_key != ADMIN_API_KEY:
-        abort(403)
+    _check_admin()
     return send_file("fault_model.pkl", as_attachment=True)
 
 
+# Support BOTH /train and /retrain for compatibility
 @app.route("/train", methods=["POST"])
+@app.route("/retrain", methods=["POST"])
 def train():
     """
     Retrain the ML model with new data (admin only).
+    Returns 200 on success, 400 on bad data, 500 on unexpected errors.
     """
-    api_key = request.headers.get("X-API-KEY")
-    if api_key != ADMIN_API_KEY:
-        abort(403)
-
+    _check_admin()
     try:
         data = request.get_json(force=True)
     except Exception:
         return jsonify({"valid": False, "details": "Invalid JSON payload"}), 400
 
-    ok, result = retrain_model(data)
-    return jsonify({"valid": ok, "details": result}), 200 if ok else 500
+    try:
+        ok, result = retrain_model(data)
+        return jsonify({"valid": ok, "details": result}), (200 if ok else 400)
+    except Exception as e:
+        return jsonify({"valid": False, "details": f"Training error: {e}"}), 500
 
 
 @app.route("/monitor", methods=["POST"])
@@ -152,6 +160,7 @@ def monitor():
 
 @app.route("/ingest", methods=["POST"])
 def ingest():
+    # Parse JSON or record platform error on-chain with 'unknown' panel
     try:
         data = request.get_json(force=True)
     except Exception:
@@ -179,6 +188,7 @@ def ingest():
         response = log_if_changed(panel_id, "not_installed", payload)
         return jsonify(response), 200
 
+    # Oracle 1
     valid, vresult = validate_payload(data)
     if not valid:
         payload = {
@@ -199,6 +209,7 @@ def ingest():
         "accel_z": data["accel_z"]
     }
 
+    # ML prediction
     ml_ok, ml_result = predict_fault(cleaned)
     if not ml_ok:
         payload = {
@@ -215,6 +226,7 @@ def ingest():
     last_status = panel_history.get(panel_id, None)
     log_event, final = finalize_event(panel_id, ml_result, last_status=last_status)
 
+    # Allow skip path (no blockchain write, return normal state)
     if not log_event and final.get("skip"):
         response = {
             "valid": True,
@@ -224,7 +236,8 @@ def ingest():
         }
         return jsonify(response), 200
 
-        color = final.get("severity_color", COLOR_CODES['system_error'][1])
+    # --- FIXED: ensure color mapping executes (no dead code) ---
+    color = final.get("severity_color", COLOR_CODES['system_error'][1])
     if color == "blue":
         new_status = "normal"
         prediction = 0
@@ -252,4 +265,3 @@ def ingest():
 # --- Entrypoint ---
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
