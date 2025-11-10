@@ -1,10 +1,10 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import joblib
-import numpy as np
-from sklearn.ensemble import RandomForestClassifier
-
-from oracle1 import validate_payload
+import os
+import time
+from flask import Flask, request, jsonify, send_file, abort
+from web3 import Web3
+from oracle1_validation import validate_payload
+from ml_model import predict_fault, retrain_model
+from oracle2_finalize import finalize_event
 
 app = Flask(__name__)
 CORS(app)
@@ -18,7 +18,7 @@ ADMIN_KEY = "Admin_acsess_to_platform"
 
 @app.route("/")
 def home():
-    return "Oracle backend is running."
+    return "backend is running."
 
 @app.route("/ingest", methods=["POST"])
 def ingest():
